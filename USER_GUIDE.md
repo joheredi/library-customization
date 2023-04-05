@@ -21,7 +21,7 @@ export function foo(input: string | string[]): void {
 **Custom Function (`custom/moduleA.ts`):**
 
 ```typescript
-import { foo as _foo } from "../../generated/api/operations";
+import { foo as _foo } from "../generated/operations";
 
 export function foo(input: string | string[]): void {
   const flatInput = typeof input === "string" ? input : input.join(" | ");
@@ -61,7 +61,7 @@ export class MyClass {
 **Custom Class (`custom/moduleA.ts`):**
 
 ```typescript
-import { MyClass as _MyClass } from "../../generated/api/operations";
+import { MyClass as _MyClass } from "../generated/operations";
 
 export class MyClass {
   private __generated: _MyClass;
@@ -113,7 +113,7 @@ export interface MyInterface {
 }
 ```
 
-** Merged Output (`src/moduleA.ts`):
+**Merged Output (`src/moduleA.ts`):**
 ```typescript
 export interface MyInterface {
   propA: string;
