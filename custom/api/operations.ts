@@ -1,3 +1,4 @@
+import { foo as _foo } from "../../generated/api/operations";
 import { GetEmbeddingsOptions } from "../../generated/api";
 import { Client, DeploymentEmbeddingsOptionsEmbeddings } from "../../generated/api/models";
 import {getPagedAsyncIterator, PagedAsyncIterableIterator, PagedResult, PageSettings} from "@azure/core-paging"
@@ -44,4 +45,12 @@ export async function getEmbeddings(
 
       return getPagedAsyncIterator(pagedResult);
   }
+
   
+
+export function foo(input: string): void;
+export function foo(input: string[]): void;
+export function foo(input: string | string[]): void {
+   const flatInput = typeof input ===  "string" ? input : input.join();
+   _foo(flatInput);
+}

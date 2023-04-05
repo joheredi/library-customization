@@ -57,3 +57,8 @@ export async function getEmbeddings(
     },
   };
 }
+
+
+export function foo(input: string | string[]) {
+  console.log(input);
+}

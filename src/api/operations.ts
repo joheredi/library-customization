@@ -64,3 +64,14 @@ export async function getEmbeddings(
 
       return getPagedAsyncIterator(pagedResult);
   }
+
+
+function _foo(input: string | string[]) {
+  console.log(input);
+}
+export function foo(input: string): void;
+export function foo(input: string[]): void;
+export function foo(input: string | string[]): void {
+   const flatInput = typeof input ===  "string" ? input : input.join();
+   _foo(flatInput);
+}
