@@ -12,12 +12,14 @@ import {
   Scope,
 } from "ts-morph";
 
-const srcDir = "./generated";
-const customDir = "./custom";
-const outDir = "./src";
-
 export async function main() {
   // Copy the entire src folder to the out folder
+  const srcDir = process.argv[2]; // generated
+  const customDir = process.argv[3]; // custom
+  const outDir = process.argv[4]; // out
+  if (!srcDir || !customDir) {
+    throw new Error("the first two arguments must be the generated and custom directories");
+  }
   await fs.copy(srcDir, outDir);
 
   // Merge the module declarations for all files in the custom directory and its subdirectories
