@@ -14,13 +14,17 @@ import {
 
 export async function main() {
   // Copy the entire src folder to the out folder
-  const srcDir = process.argv[2]; // generated
-  const customDir = process.argv[3]; // custom
-  const outDir = process.argv[4]; // out
-  if (!srcDir || !customDir) {
-    throw new Error("the first two arguments must be the generated and custom directories");
+  const originalDir = process.argv[2] ?? "./generated" // generated
+  const customDir = process.argv[3] ?? "./custom" // custom
+  const outDir = process.argv[4] ?? "./src"; // out
+  if (!originalDir || !customDir) {
+    throw new Error(
+      "the first two arguments must be the generated and custom directories"
+    );
   }
-  await fs.copy(srcDir, outDir);
+
+  // Bring everything from original into the output
+  await fs.copy(originalDir, outDir);
 
   // Merge the module declarations for all files in the custom directory and its subdirectories
   await processDirectory(customDir, outDir);
@@ -95,37 +99,40 @@ export function getCustomDeclarationsMap(
 
 function removeTsIgnore(content: string): string {
   const tsIgnorePattern = /\/\/\s*@ts-ignore/g;
-  return content.replace(tsIgnorePattern, '');
+  return content.replace(tsIgnorePattern, "");
 }
 
 export async function processFile(
   customFilePath: string,
-  outFilePath: string
+  originalFilePath: string
 ): Promise<void> {
   const customContent = await readFileContent(customFilePath);
-  const outContent = await readFileContent(outFilePath);
+  const originalContent = await readFileContent(originalFilePath);
 
-  const mergedContent = mergeModuleDeclarations(customContent, outContent);
+  const mergedContent = mergeModuleDeclarations(customContent, originalContent);
   const cleanedContent = removeTsIgnore(mergedContent);
 
-  await writeFileContent(outFilePath, cleanedContent);
+  await writeFileContent(originalFilePath, cleanedContent);
 }
 
 export async function processDirectory(
   customDir: string,
-  outDir: string
+  originalDir: string
 ): Promise<void> {
+  // Note: the originalDir is in reality the output directory but for readability we call it originalDir
+  // since we copied over eveything from the original directory to the output directory avoid
+  // overwriting the original files.
   const entries = await fs.readdir(customDir, { withFileTypes: true });
 
   for (const entry of entries) {
     const customPath = path.join(customDir, entry.name);
-    const outPath = path.join(outDir, entry.name);
+    const originalPath = path.join(originalDir, entry.name);
 
     if (entry.isFile() && path.extname(entry.name) === ".ts") {
-      await processFile(customPath, outPath);
+      await processFile(customPath, originalPath);
     } else if (entry.isDirectory()) {
       const subCustomDir = path.join(customDir, entry.name);
-      const subOutDir = path.join(outDir, entry.name);
+      const subOutDir = path.join(originalDir, entry.name);
       await fs.ensureDir(subOutDir);
       await processDirectory(subCustomDir, subOutDir);
     }
@@ -174,30 +181,30 @@ export function augmentFunction(
 
 export function mergeClasses(
   customClasses: Map<string, ClassDeclaration>,
-  outClasses: ClassDeclaration[]
+  originalClasses: ClassDeclaration[]
 ) {
-  for (const outClass of outClasses) {
-    const name = outClass.getName();
+  for (const originalClass of originalClasses) {
+    const name = originalClass.getName();
     const customClass = name ? customClasses.get(name) : undefined;
     if (customClass) {
       // Copy properties from the generated class to the custom class if they don't exist in custom class
-      for (const outProperty of outClass.getProperties()) {
-        const propertyName = outProperty.getName();
+      for (const originalProperty of originalClass.getProperties()) {
+        const propertyName = originalProperty.getName();
         if (!customClass.getProperty(propertyName)) {
-          customClass.addProperty(outProperty.getStructure());
+          customClass.addProperty(originalProperty.getStructure());
         }
       }
 
       // Merge constructor overloads, properties, and methods
       const customConstructors = customClass.getConstructors();
       if (customConstructors.length) {
-        const outConstructors = outClass.getConstructors();
+        const outConstructors = originalClass.getConstructors();
         if (outConstructors.length) {
           outConstructors[0].replaceWithText(customConstructors[0].getText());
           customConstructors.shift();
         }
         for (const customConstructor of customConstructors) {
-          outClass.addConstructor((customConstructor as any).getStructure());
+          originalClass.addConstructor((customConstructor as any).getStructure());
         }
       }
 
@@ -210,7 +217,7 @@ export function mergeClasses(
           generatedProperty.hasModifier(SyntaxKind.PrivateKeyword)
       );
 
-      for (const outMethod of outClass.getMethods()) {
+      for (const outMethod of originalClass.getMethods()) {
         let methodName = `${outMethod.getName()}`;
         const methodStructure: MethodDeclarationStructure =
           outMethod.getStructure() as MethodDeclarationStructure;
@@ -221,8 +228,8 @@ export function mergeClasses(
           methodName = `_${outMethod.getName()}`;
           methodStructure.name = methodName;
           methodStructure.scope = Scope.Private;
+          customClass.addMethod(methodStructure);
         }
-        customClass.addMethod(methodStructure);
       }
 
       if (isAugmentedClass) {
@@ -246,7 +253,7 @@ export function mergeClasses(
       }
 
       // Replace the output class with the custom class
-      outClass.replaceWithText(customClass.getText());
+      originalClass.replaceWithText(customClass.getText());
     }
   }
 }
@@ -259,54 +266,56 @@ export function isClassDeclaration(
 
 export function mergeAndReplace<T extends Declaration>(
   customDeclarations: Map<string, T>,
-  outDeclarations: T[]
+  originalDeclarations: T[]
 ): void {
-  for (const outDeclaration of outDeclarations) {
-    const name = outDeclaration.getName();
+  for (const originalDeclaration of originalDeclarations) {
+    const name = originalDeclaration.getName();
     const customDeclaration = name ? customDeclarations.get(name) : undefined;
     if (customDeclaration && name) {
       if (
         isFunction(customDeclaration) &&
-        isFunction(outDeclaration) &&
+        isFunction(originalDeclaration) &&
         isAugmented(customDeclarations.get(name) as FunctionDeclaration)
       ) {
-        augmentFunction(outDeclaration, customDeclaration);
+        augmentFunction(originalDeclaration, customDeclaration);
         continue;
       }
-      outDeclaration.replaceWithText(customDeclaration.getText());
+      // This is an override just replace the original with the custom 
+      originalDeclaration.replaceWithText(customDeclaration.getText());
     }
   }
 }
 
 export function mergeModuleDeclarations(
   customContent: string,
-  outContent: string
+  originalContent: string
 ): string {
   const project = new Project();
 
   // Add the custom and out content as in-memory source files
-  const customSourceFile = project.createSourceFile("custom.ts", customContent);
-  const outSourceFile = project.createSourceFile("out.ts", outContent);
+  const customVirtualSourceFile = project.createSourceFile("custom.ts", customContent);
+  const originalVirtualSourceFile = project.createSourceFile("out.ts", originalContent);
 
-  const customDeclarationsMap = getCustomDeclarationsMap(customSourceFile);
+  // Create a map of of all the available customizations in the current file.
+  const customDeclarationsMap = getCustomDeclarationsMap(customVirtualSourceFile);
 
   // Merge custom declarations into the out source file
   mergeAndReplace(
     customDeclarationsMap.functions,
-    outSourceFile.getFunctions()
+    originalVirtualSourceFile.getFunctions()
   );
-  mergeClasses(customDeclarationsMap.classes, outSourceFile.getClasses());
+  mergeClasses(customDeclarationsMap.classes, originalVirtualSourceFile.getClasses());
   mergeAndReplace(
     customDeclarationsMap.interfaces,
-    outSourceFile.getInterfaces()
+    originalVirtualSourceFile.getInterfaces()
   );
   mergeAndReplace(
     customDeclarationsMap.typeAliases,
-    outSourceFile.getTypeAliases()
+    originalVirtualSourceFile.getTypeAliases()
   );
 
-  outSourceFile.fixMissingImports();
-  return outSourceFile.getFullText();
+  originalVirtualSourceFile.fixMissingImports();
+  return originalVirtualSourceFile.getFullText();
 }
 
 main().catch((error) => {
