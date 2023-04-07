@@ -1,6 +1,5 @@
 import * as fs from "fs-extra";
 import * as path from "path";
-import { FunctionDeclarationOverloadStructure, FunctionDeclarationStructure, MethodDeclaration, PropertySignature, Signature, StructureKind } from "ts-morph";
 import {
   Project,
   FunctionDeclaration,
@@ -8,12 +7,12 @@ import {
   InterfaceDeclaration,
   TypeAliasDeclaration,
   SourceFile,
-  SyntaxKind,
-  MethodDeclarationStructure,
-  Scope,
-  MethodDeclarationOverloadStructure,
 
 } from "ts-morph";
+import { augmentFunctions } from "./functions";
+import { augmentClasses } from "./classes";
+import { augmentInterfaces } from "./interfaces";
+import { sortSourceFileContents } from "./helpers/preformat";
 
 export async function main() {
   // Copy the entire src folder to the out folder
@@ -33,11 +32,6 @@ export async function main() {
   await processDirectory(customDir, outDir);
 }
 
-type Declaration =
-  | FunctionDeclaration
-  | ClassDeclaration
-  | InterfaceDeclaration
-  | TypeAliasDeclaration;
 
 type CustomDeclarationsMap = {
   functions: Map<string, FunctionDeclaration>;
@@ -142,261 +136,6 @@ export async function processDirectory(
   }
 }
 
-export function isAugmented(customFunction: FunctionDeclaration): boolean {
-  const imports = customFunction.getSourceFile().getImportDeclarations();
-  for (const importDeclaration of imports) {
-    const namedImports = importDeclaration.getNamedImports();
-    for (const namedImport of namedImports) {
-      if (
-        namedImport.getName() === `${customFunction.getName()}` &&
-        importDeclaration.getModuleSpecifierValue().includes("/generated/")
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-export function isFunction(
-  declaration: Declaration
-): declaration is FunctionDeclaration {
-  return declaration.getKind() === SyntaxKind.FunctionDeclaration;
-}
-
-
-export function augmentClass(originalClassDeclaration: ClassDeclaration | undefined, customClassDeclaration: ClassDeclaration, originalFile: SourceFile) {
-
-  // If there is no original class declaration, we'll just copy the custom one
-  if (!originalClassDeclaration) {
-    const addedClass = originalFile.addClass(customClassDeclaration.getStructure());
-    return;
-  }
-
-  // Get custom properties
-  const customProperties = customClassDeclaration.getProperties();
-  for (const customProperty of customProperties) {
-    const propertyName = customProperty.getName();
-
-    // do not copy over to the output the __customization property
-    // as it is just a token to determine if the class is augmented
-    // and enable intelisense for the customization UX.
-    if (propertyName === "___") {
-      continue;
-    }
-
-    // If the property already exists in the original declaration, we'll replace it
-    originalClassDeclaration.getProperty(propertyName)?.remove();
-    originalClassDeclaration.addProperty(customProperty.getStructure());
-  }
-
-  // Get custom methods
-  const customMethods = customClassDeclaration.getMethods();
-  for (const customMethod of customMethods) {
-    const methodName = customMethod.getName();
-
-    // If the method already exists in the original declaration, we'll replace it
-    const originalMethod = originalClassDeclaration.getMethod(methodName);
-    augmentMethod(originalMethod, customMethod, originalClassDeclaration);
-  }
-}
-
-
-export function augmentFunctions(customFunctions: FunctionDeclaration[], originalFunctions: Map<string, FunctionDeclaration>, originalFile: SourceFile) {
-  for (const customFunction of customFunctions) {
-    const customFunctionName = customFunction.getName();
-    const originalFunction = originalFunctions.get(customFunctionName ?? "");
-    augmentFunction(customFunction, originalFunction, originalFile);
-  }
-}
-
-export function augmentFunction(customFunction: FunctionDeclaration, originalFunction: FunctionDeclaration | undefined, originalFile: SourceFile) {
-  // If the custom function doesn't exist in the original file, we just need to add it
-
-  if (!originalFunction) {
-    addFunctionToFile(customFunction, originalFile);
-    return;
-  }
-
-  // Original function with the same name exists so
-  // we need to check if the custom method is using the original method
-  // to determine if we need to augment or replace
-  if (isAugmentingFunction(customFunction)) {
-    convertToPrivateFunction(originalFunction, originalFile);
-    addFunctionToFile(customFunction, originalFile);
-  } else {
-    // This is not using the original method so we'll replace it
-    originalFunction.remove();
-    addFunctionToFile(customFunction, originalFile);
-  }
-}
-
-export function augmentMethod(originalMethod: MethodDeclaration | undefined, customMethod: MethodDeclaration, originalClass: ClassDeclaration) {
-  // custom is adding a new method this is a new method on the class, we'll add it to original
-  if (!originalMethod) {
-    addMethodToClass(customMethod, originalClass);
-    return;
-  }
-
-  // Original method with the same name exists so
-  // we need to check if the custom method is using the original method
-  // to determine if we need to augment or replace
-  if (isAugmentingMethod(customMethod)) {
-    convertToPrivateMethod(originalMethod, originalClass);
-    addMethodToClass(customMethod, originalClass);
-  }
-  else {
-    // This is not using the original method so we'll replace it
-    originalMethod.remove();
-    addMethodToClass(customMethod, originalClass);
-  }
-
-}
-
-function isAugmentingFunction(fn: FunctionDeclaration): boolean {
-  const customFunctionContent = fn.getBody()?.getFullText();
-
-  if (customFunctionContent?.includes(`_${fn.getName()}`)) {
-    return true;
-  }
-
-  return false;
-}
-
-function isAugmentingMethod(customMethod: MethodDeclaration): boolean {
-  const customMethodContent = customMethod.getBody()?.getFullText();
-
-  if (customMethodContent?.includes(`this.___.${customMethod.getName()}`)) {
-    return true;
-  }
-
-  return false;
-}
-
-
-export function convertToPrivateFunction(originalFunction: FunctionDeclaration, originalFile: SourceFile) {
-  const functionStructure = originalFunction.getStructure();
-  const functionOverloads = originalFunction.getOverloads();
-
-  if (isOverload(functionStructure)) {
-    return;
-  }
-
-  functionStructure.isExported = false;
-  functionStructure.name = `_${functionStructure.name}`;
-
-  const newFunction = originalFile.addFunction(functionStructure);
-
-  for (const overload of functionOverloads) {
-    const overloadStructure = overload.getStructure();
-    if (isOverload(overloadStructure)) {
-      overloadStructure.isExported = false;
-      newFunction.addOverload(overloadStructure);
-    }
-  }
-  originalFunction.remove();
-}
-
-export function convertToPrivateMethod(originalMethod: MethodDeclaration, originalClass: ClassDeclaration) {
-  const methodStructure = originalMethod.getStructure();
-  const methodOverloads = originalMethod.getOverloads();
-  if (isOverload(methodStructure)) {
-    return;
-  }
-
-  methodStructure.scope = Scope.Private;
-  methodStructure.name = `_${methodStructure.name}`;
-
-  const newMethod = originalClass.addMethod(methodStructure);
-
-  for (const overload of methodOverloads) {
-    const overloadStructure = overload.getStructure();
-    if (isOverload(overloadStructure)) {
-      overloadStructure.scope = Scope.Private;
-      newMethod.addOverload(overloadStructure);
-    }
-  }
-  originalMethod.remove();
-}
-
-export function addFunctionToFile(fn: FunctionDeclaration, file: SourceFile) {
-  const functionStructure = fn.getStructure();
-
-  // custom is adding a new function this is a new method on the class, we'll add it to original
-  if (!isOverload(functionStructure)) {
-    const addedFunction = file.addFunction(functionStructure);
-    const overloads = fn.getOverloads();
-    for (const overload of overloads) {
-      const overloadStructure = overload.getStructure();
-      if (isOverload(overloadStructure)) {
-        addedFunction.addOverload(overloadStructure);
-      }
-    }
-  }
-}
-
-export function addMethodToClass(customMethod: MethodDeclaration, classDeclaration: ClassDeclaration) {
-
-  // We need to replace the augmentation call with the private method call
-  if (isAugmentingMethod(customMethod) && !isOverload(customMethod.getStructure())) {
-    const regex = new RegExp(`this\\.___.${customMethod.getName()}`, 'g');
-    const modifiedMethodContent = customMethod.getBodyText()?.replace(regex, `this._${customMethod.getName()}`);
-    modifiedMethodContent && customMethod.setBodyText(modifiedMethodContent);
-  }
-
-  const methodStructure = customMethod.getStructure();
-
-  // custom is adding a new method this is a new method on the class, we'll add it to original
-  if (!isOverload(methodStructure)) {
-    const addedMethod = classDeclaration.addMethod(methodStructure);
-    const overloads = customMethod.getOverloads();
-    for (const overload of overloads) {
-      const overloadStructure = overload.getStructure();
-      if (isOverload(overloadStructure)) {
-        addedMethod.addOverload(overloadStructure);
-      }
-    }
-  }
-}
-
-function isOverload(method: FunctionDeclarationStructure | FunctionDeclarationOverloadStructure): method is FunctionDeclarationOverloadStructure;
-function isOverload(method: MethodDeclarationStructure | MethodDeclarationOverloadStructure): method is MethodDeclarationOverloadStructure;
-function isOverload(method: MethodDeclarationStructure | MethodDeclarationOverloadStructure | FunctionDeclarationStructure | FunctionDeclarationOverloadStructure): method is (FunctionDeclarationOverloadStructure | MethodDeclarationOverloadStructure) {
-  return method.kind === StructureKind.MethodOverload || method.kind === StructureKind.FunctionOverload;
-}
-
-export function augmentClasses(
-  originalClasses: Map<string, ClassDeclaration>,
-  customClasses: ClassDeclaration[],
-  originalFile: SourceFile
-) {
-  for (const customClass of customClasses) {
-    const customClassName = customClass.getName();
-    const originalClass = originalClasses.get(customClassName ?? "");
-    augmentClass(originalClass, customClass, originalFile);
-  }
-}
-
-export function isClassDeclaration(
-  declaration?: Declaration
-): declaration is ClassDeclaration {
-  return declaration?.getKind() === SyntaxKind.ClassDeclaration;
-}
-
-export function mergeAndReplace<T extends Declaration>(
-  customDeclarations: Map<string, T>,
-  originalDeclarations: T[]
-): void {
-  for (const originalDeclaration of originalDeclarations) {
-    const name = originalDeclaration.getName();
-    const customDeclaration = name ? customDeclarations.get(name) : undefined;
-    if (customDeclaration && name) {
-      // This is an override just replace the original with the custom 
-      originalDeclaration.replaceWithText(customDeclaration.getText());
-    }
-  }
-}
-
 export function mergeModuleDeclarations(
   customContent: string,
   originalContent: string
@@ -424,86 +163,10 @@ export function mergeModuleDeclarations(
     customVirtualSourceFile.getInterfaces(),
     originalVirtualSourceFile
   );
-  mergeAndReplace(
-    originalDeclarationsMap.typeAliases,
-    originalVirtualSourceFile.getTypeAliases()
-  );
 
   originalVirtualSourceFile.fixMissingImports();
+  sortSourceFileContents(originalVirtualSourceFile)
   return originalVirtualSourceFile.getFullText();
-}
-
-export function augmentInterfaces(originalInterfaces: Map<string, InterfaceDeclaration>, customInterfaces: InterfaceDeclaration[], originalFile: SourceFile) {
-  for (const customInterface of customInterfaces) {
-    const originalInterface = originalInterfaces.get(customInterface.getName() ?? "");
-    augmentInterface(customInterface, originalInterface, originalFile)
-  }
-}
-
-export function augmentInterface(customInterface: InterfaceDeclaration, originalInterface: InterfaceDeclaration | undefined, originalFile: SourceFile) {
-  // If there is no interface with the same name in the original file, we'll add it
-  if (!originalInterface) {
-    originalFile.addInterface(customInterface.getStructure());
-    return;
-  }
-
-  // Remove any properties marked with // @azsdk-remove 
-  removeProperties(customInterface, originalInterface);
-
-  // Merge the properties from the custom interface into the original interface
-  mergeProperties(customInterface, originalInterface);
-}
-
-export function mergeProperties(customInterface: InterfaceDeclaration, originalInterface: InterfaceDeclaration) {
-  const customProperties = customInterface.getProperties();
-  for (const customProperty of customProperties) {
-    const propertyName = customProperty.getName();
-    const originalProperty = originalInterface.getProperty(propertyName);
-
-    // If the property already exists in the original interface, we'll remove it
-    if (originalProperty) {
-      originalProperty.remove();
-    }
-
-    // Add the custom property
-    if(getAnnotation(customProperty) !== "Remove") {
-      originalInterface.addProperty(customProperty.getStructure());
-    }
-  }
-}
-
-export function removeProperties(customInterface: InterfaceDeclaration, originalInterface: InterfaceDeclaration) {
-  const customProperties = customInterface.getProperties();
-  for (const customProperty of customProperties) {
-    const propertyName = customProperty.getName();
-
-    // Check if the property has a `// @azsdk-remove` comment
-    if (getAnnotation(customProperty) === "Remove") {
-      originalInterface.getProperty(propertyName)?.remove();
-    }
-  }
-}
-
-export type Annotation = "Remove";
-export function getAnnotation(declaration: Declaration | PropertySignature): Annotation | undefined {
-  // Check if the property has a `// @azsdk-remove` comment
-  const leadingCommentRanges = declaration.getLeadingCommentRanges();
-  if (leadingCommentRanges) {
-    for (const commentRange of leadingCommentRanges) {
-
-      const commentText = commentRange.getText();
-
-      const regex = /@azsdk-(\w+)/;
-      const match = commentText.match(regex);
-      const annotation = match ? match[0] : null;
-
-      if (annotation === "@azsdk-remove") {
-        return "Remove";
-      }
-
-      return undefined;
-    }
-  }
 }
 
 main().catch((error) => {
