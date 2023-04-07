@@ -1,11 +1,11 @@
 {
   "name": "customization",
   "version": "1.0.0",
-  "description": "",
+  "description": "This is a TypeScript precompile script that allows you to merge custom TypeScript modules with their corresponding modules in a source folder. The precompile script can be used to override/redefine parts of a module, or to augment it by adding new functions, classes, or interfaces.",
   "main": "index.js",
   "scripts": {
     "precompile": "ts-node ./scripts/precompile.ts",
-    "test": "mocha --require ts-node/register ./test/*.spec.ts"
+    "test": "mocha --require ts-node/register ./test/**/*.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,5 +26,8 @@
     "chai": "^4.3.7",
     "mocha": "^10.2.0",
     "ts-node": "^10.9.1"
+  },
+  "directories": {
+    "test": "test"
   }
 }

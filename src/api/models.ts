@@ -3,12 +3,13 @@
 
 export type Client = any;
 
+/** */
 export interface DeploymentEmbeddingsOptionsEmbeddings {
-    /** Embedding values for the prompts submitted in the request. */
-    data2: EmbeddingItem[];
-    /** Usage counts for tokens input using the embeddings API. */
-    usage: EmbeddingsUsage;
-  }
+  /** Embedding values for the prompts submitted in the request. */
+  data: EmbeddingItem[];
+  /** Usage counts for tokens input using the embeddings API. */
+  usage: EmbeddingsUsage;
+}
 
 /** Representation of a single embeddings relatedness comparison. */
 export interface EmbeddingItem {
