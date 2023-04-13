@@ -117,7 +117,7 @@ export async function processDirectory(
   originalDir: string
 ): Promise<void> {
   // Note: the originalDir is in reality the output directory but for readability we call it originalDir
-  // since we copied over eveything from the original directory to the output directory avoid
+  // since we copied over everything from the original directory to the output directory avoid
   // overwriting the original files.
   const entries = await fs.readdir(customDir, { withFileTypes: true });
 
@@ -128,10 +128,8 @@ export async function processDirectory(
     if (entry.isFile() && path.extname(entry.name) === ".ts") {
       await processFile(customPath, originalPath);
     } else if (entry.isDirectory()) {
-      const subCustomDir = path.join(customDir, entry.name);
-      const subOutDir = path.join(originalDir, entry.name);
-      await fs.ensureDir(subOutDir);
-      await processDirectory(subCustomDir, subOutDir);
+      await fs.ensureDir(originalPath);
+      await processDirectory(customPath, originalPath);
     }
   }
 }
