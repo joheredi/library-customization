@@ -1,4 +1,4 @@
-import { ClassDeclaration, SourceFile, MethodDeclaration, Scope, PropertyDeclaration, CommentRange, JSDoc, StructureKind } from "ts-morph";
+import { ClassDeclaration, SourceFile, MethodDeclaration, Scope, PropertyDeclaration, CommentRange, JSDoc, StructureKind, ConstructorDeclaration } from "ts-morph";
 import { isOverload } from "./helpers/overloads";
 
 const AUGMENT_CLASS_TOKEN = "___";
@@ -19,7 +19,7 @@ export function augmentClass(originalClassDeclaration: ClassDeclaration | undefi
 
     // do not copy over to the output the AUGMENT_CLASS_TOKEN property
     // as it is just a token to determine if the class is augmented
-    // and enable intelisense for the customization UX.
+    // and enable intellisense for the customization UX.
     if (propertyName === AUGMENT_CLASS_TOKEN) {
       continue;
     }
@@ -41,6 +41,18 @@ export function augmentClass(originalClassDeclaration: ClassDeclaration | undefi
     // If the method already exists in the original declaration, we'll replace it
     const originalMethod = originalClassDeclaration.getMethod(methodName);
     augmentMethod(originalMethod, customMethod, originalClassDeclaration);
+  }
+
+  // Handle custom constructors
+  const customCtors = customClassDeclaration.getConstructors();
+  const originalCtors = originalClassDeclaration.getConstructors();
+  let i = 0, j = 0;
+  while (i < customCtors.length || j < originalCtors.length) {
+    if (i === customCtors.length) {
+      originalCtors[j++].remove();
+      continue;
+    }
+    augmentConstructor(originalCtors[j++], customCtors[i++], originalClassDeclaration);
   }
 }
 
@@ -69,13 +81,7 @@ export function augmentMethod(originalMethod: MethodDeclaration | undefined, cus
 
 
 function isAugmentingMethod(customMethod: MethodDeclaration): boolean {
-  const customMethodContent = customMethod.getBody()?.getFullText();
-
-  if (customMethodContent?.includes(`this.${AUGMENT_CLASS_TOKEN}.${customMethod.getName()}`)) {
-    return true;
-  }
-
-  return false;
+  return Boolean(customMethod.getBody()?.getFullText()?.includes(`this.${AUGMENT_CLASS_TOKEN}.${customMethod.getName()}`));
 }
 
 
@@ -116,24 +122,34 @@ export function addMethodToClass(customMethod: MethodDeclaration, classDeclarati
 
   // custom is adding a new method this is a new method on the class, we'll add it to original
   if (!isOverload(methodStructure)) {
-    const addedMethod = classDeclaration.addMethod({
+    classDeclaration.addMethod({
       ...methodStructure, docs: jsdoc?.map(jsDoc => jsDoc.getStructure()), leadingTrivia: writer => {
         comments?.forEach(comment => {
           writer.writeLine(comment.getText());
         });
       }
     });
-
-    const overloads = customMethod.getOverloads();
-    for (const overload of overloads) {
-      const overloadStructure = overload.getStructure();
-      if (isOverload(overloadStructure)) {
-        addedMethod.addOverload(overloadStructure);
-      }
-    }
   }
 }
 
+export function augmentConstructor(originalCtor: ConstructorDeclaration | undefined, customCtor: ConstructorDeclaration, originalClass: ClassDeclaration) {
+  const ctorComments = getComments(customCtor, undefined);
+  originalCtor?.remove();
+  addConstructorToClass(customCtor, originalClass, ctorComments);
+}
+
+export function addConstructorToClass(customConstructor: ConstructorDeclaration, classDeclaration: ClassDeclaration, { comments, jsdoc }: Comments = {}) {
+  const ctorStructure = customConstructor.getStructure();
+  if (!isOverload(ctorStructure)) {
+    classDeclaration.addConstructor({
+      ...ctorStructure, docs: jsdoc?.map(jsDoc => jsDoc.getStructure()), leadingTrivia: writer => {
+        comments?.forEach(comment => {
+          writer.writeLine(comment.getText());
+        });
+      }
+    });
+  }
+}
 
 export function augmentClasses(
   originalClasses: Map<string, ClassDeclaration>,
@@ -152,22 +168,22 @@ interface Comments {
   jsdoc?: JSDoc[];
 }
 
-function getComments(customClass: ClassDeclaration | PropertyDeclaration | MethodDeclaration, originalClass: ClassDeclaration | PropertyDeclaration | MethodDeclaration | undefined): Comments {
-  const customClassComments = customClass.getLeadingCommentRanges();
-  const customClassJSDocs = customClass.getJsDocs();
+function getComments(customDeclaration: ClassDeclaration | PropertyDeclaration | MethodDeclaration | ConstructorDeclaration, originalDeclaration: ClassDeclaration | PropertyDeclaration | MethodDeclaration | ConstructorDeclaration | undefined): Comments {
+  const customClassComments = customDeclaration.getLeadingCommentRanges();
+  const customClassJSDocs = customDeclaration.getJsDocs();
 
-  if (!originalClass) {
+  if (!originalDeclaration) {
     return {
       comments: customClassComments,
       jsdoc: customClassJSDocs,
     }
   }
 
-  const originalClassComments = originalClass?.getLeadingCommentRanges();
-  const originalClassJSDocs = originalClass?.getJsDocs();
+  const originalClassComments = originalDeclaration.getLeadingCommentRanges();
+  const originalClassJSDocs = originalDeclaration.getJsDocs();
 
-  const comments: CommentRange[] = customClassComments ?? originalClassComments
-  const jsdoc: JSDoc[] = customClassJSDocs ?? originalClassJSDocs;
+  const comments = customClassComments.length === 0 ? originalClassComments : customClassComments;
+  const jsdoc = customClassJSDocs.length === 0 ? originalClassJSDocs : customClassJSDocs;
 
   return {
     comments,
